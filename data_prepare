@@ -1,0 +1,67 @@
+# 数据准备
+import numpy as np
+import pandas as pd
+
+def Data_loader():
+    # 文件路径
+    ENU_measure_path = "18-10-25至19-3-25三方向位移数据.xlsx"
+    t_path = "天气数据.xls"
+    M_path = "data.csv"
+    # 三方向数据
+    df_1 = pd.read_excel(ENU_measure_path)
+    ENU_df = pd.DataFrame(df_1)
+    ENU_E = ENU_df["E/m"]
+    ENU_E = np.array(ENU_E)
+    ENU_N = ENU_df["N/m"]
+    ENU_N = np.array(ENU_N)
+    ENU_U = ENU_df["U/m"]
+    ENU_U = np.array(ENU_U)
+    ENU_R = ENU_df['R/m']
+    ENU_R = np.array(ENU_R)
+    
+    df_2 = pd.read_excel(t_path)
+    t_df = pd.DataFrame(df_2)
+    # 最大温度数据
+    max_tem = t_df["bWendu"]
+    max_tem_ls = []
+    for i in range(len(max_tem)):
+        temp = str(max_tem[i])
+        temp = temp.replace("℃","")
+        max_tem_ls.append(eval(temp))
+    max_tem = np.array(max_tem_ls)
+    # 最低温度数据
+    min_tem = t_df["yWendu"]
+    min_tem_ls = []
+    for i in range(len(min_tem)):
+        temp = str(min_tem[i])
+        temp = temp.replace("℃","")
+        min_tem_ls.append(eval(temp))
+    min_tem =np.array(min_tem_ls)
+    # 天气数据
+    tianqi = t_df["Tian_Qi"]
+    tianqi = np.array(tianqi)
+    # 风力数据
+    Feng = t_df["Feng"]
+    Feng = np.array(Feng)
+    # 降雨数据
+    rain = t_df["rainfall"]
+    rain = np.array(rain)
+    # 灌溉数据
+    guangai = t_df["guangai"]
+    guangai = np.array(guangai)
+    # 获取时间数据
+    namels = t_df["ymd"]
+    name_ls = []
+    for i in range(len(namels)):
+        temp = str(namels[i])
+        temp = temp.replace(" 00:00:00","")
+        name_ls.append(str(temp))
+    # 读取另一文件数据，该数据为位移计和GNSS监测数据
+    df_3 = pd.read_csv(M_path)
+    M_df = pd.DataFrame(df_3)
+    M_data = M_df["Measurerel"]
+    R_data = M_df["R"]
+    M_data = np.array(M_data)
+    R_data = np.array(R_data)
+
+    return [ENU_R, M_data, R_data, ENU_U, ENU_E, ENU_N,max_tem,min_tem,name_ls]
