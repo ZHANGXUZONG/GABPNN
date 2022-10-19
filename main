@@ -1,0 +1,288 @@
+# 改进算法主程序
+import sys
+import chrom_code  # 基因编码模块
+import chrom_mutate  # 变异算子模块
+import chrom_cross  # 交叉算子模块
+import chrom_select  # 选择算子模块
+import chrom_fitness  # 染色体适应度计算模块
+import data_prepare  # 数据准备模块
+import BP_network  # BPNN模块
+import torch
+import torch.nn.functional as F
+from torchvision.transforms import transforms
+import numpy as np
+import matplotlib.pyplot as plt
+import time
+
+plt.rcParams['font.sans-serif'] = ['SimHei']
+plt.rcParams['axes.unicode_minus'] = False
+
+# -----参数设置-----
+epochs = 300  # 神经网络最大迭代次数
+learning_rate = 0.01  # 学习率
+n_feature = 6  # 输入层个数
+n_hidden = 9  # 隐含层个数
+n_output = 1  # 输出层个数
+
+chrom_len = n_feature * n_hidden + n_hidden + n_hidden * n_output + n_output  # 染色体长度
+size = 15  # 种群规模
+bound = np.ones((chrom_len, 2))
+sz = np.array([[-1, 0], [0, 1]])
+bound = np.dot(bound, sz)  # 各基因取值范围
+p_cross = 0.4  # 交叉概率
+p_mutate = 0.01  # 变异概率
+maxgen = 30  # 遗传最大迭代次数
+
+# 数据准备
+# ========================================= #
+data_set = data_prepare.Data_loader()
+displace = data_set[1]
+name_ls = data_set[-1]
+in_train_data = []
+in_test_data = []
+
+# 数目分配
+train_num = 120
+test_num = len(displace) - train_num - n_feature
+
+for i in range(len(displace)):
+    temp = []
+    if i <= train_num-1:  # 用于控制训练数据和预测数据的分配
+        temp = [round(displace[i + j], 5) for j in range(n_feature)]
+        in_train_data.append(temp)
+    else:
+        temp = [round(displace[i + j], 5) for j in range(n_feature)]
+        in_test_data.append(temp)
+    if i == len(displace)-n_feature-1:
+        break
+
+# 格式转化
+in_train_data = np.array(in_train_data)
+in_test_data = np.array(in_test_data)
+# 数据分割，用于建模和预测
+out_train_data = displace[n_feature:train_num+n_feature]
+out_test_data = displace[train_num+n_feature:len(displace)]
+
+# 测试输出
+# print(in_train_data)
+# print(out_train_data)
+# print(in_test_data)
+# print(out_test_data)
+# print(train_num)
+# print(test_num)
+
+# 数据格式转换及数据归一化
+tensor_tran = transforms.ToTensor()
+# 训练过程中的输入层数据
+in_train_data = tensor_tran(in_train_data).to(torch.float)
+in_train_data = F.normalize(in_train_data)
+in_train_data = in_train_data.reshape(train_num, n_feature)
+# 预测过程中的输入层数据
+in_test_data = tensor_tran(in_test_data).to(torch.float)
+in_test_data = F.normalize(in_test_data)
+in_test_data = in_test_data.reshape(test_num, n_feature)
+# 训练过程中的输出层数据
+out_train_data = out_train_data.reshape(len(out_train_data), 1)
+out_train_data = tensor_tran(out_train_data).to(torch.float)
+un_norm1 = out_train_data[0][0]
+out_train_data = F.normalize(out_train_data)
+norm1 = out_train_data[0][0]
+out_train_data = out_train_data.reshape(train_num, n_output)
+fanshu_train = round(float(un_norm1 / norm1), 4)  # 建模时，训练数据中输出数据的范数
+# 预测中用于检验的输出层数据
+out_test_data = out_test_data.reshape(len(out_test_data), 1)
+out_test_data = tensor_tran(out_test_data).to(torch.float)
+un_norm = out_test_data[0][0]   # 归一化前
+out_test_data = F.normalize(out_test_data)
+norm = out_test_data[0][0]  # 归一化后
+out_test_data = out_test_data.reshape(test_num, n_output)
+fanshu = round(float(un_norm / norm), 4)  # 预测时，测试数据中输出数据的范数
+
+# 建模训练数据
+x_train = in_train_data
+y_train = out_train_data
+x_test = in_test_data
+y_label = out_test_data
+# ========================================== #
+
+chrom_sum = []  # 种群，染色体集合
+for i in range(size):
+    chrom_sum.append(chrom_code.code(chrom_len, bound))
+account = 0  # 遗传迭代次数计数器
+best_fitness_ls = []  # 每代最优适应度
+ave_fitness_ls = []  # 每代平均适应度
+best_code = []  # 迭代完成适应度最高的编码值
+
+# 适应度计算
+fitness_ls = []
+for i in range(size):
+    fitness = chrom_fitness.calculate_fitness(chrom_sum[i], n_feature, n_hidden, n_output,
+                                              epochs, learning_rate, x_train, y_train)
+    fitness_ls.append(fitness)
+# 收集每次迭代的最优适应值和平均适应值
+fitness_array = np.array(fitness_ls).flatten()
+fitness_array_sort = fitness_array.copy()
+fitness_array_sort.sort()
+best_fitness = fitness_array_sort[-1]
+best_fitness_ls.append(best_fitness)
+ave_fitness_ls.append(fitness_array.sum() / size)
+
+while True:
+    # 选择算子
+    # print("\n这是第{}次遗传迭代。".format(account+1))
+    # print("平均适应度为：",fitness_array.sum()/size)
+    chrom_sum = chrom_select.select(chrom_sum, fitness_ls)
+    # 交叉算子
+    chrom_sum = chrom_cross.cross(chrom_sum, size, p_cross, chrom_len, bound)
+    # 变异算子
+    chrom_sum = chrom_mutate.mutate(chrom_sum, size, p_mutate, chrom_len, bound, maxgen, account + 1)
+    # 适应度计算
+    fitness_ls = []
+    for i in range(size):
+        fitness = chrom_fitness.calculate_fitness(chrom_sum[i], n_feature, n_hidden, n_output,
+                                                  epochs, learning_rate, x_train, y_train)
+        fitness_ls.append(fitness)
+    # 收集每次迭代的最优适应值和平均适应值
+    fitness_array = np.array(fitness_ls).flatten()
+    fitness_array_sort = fitness_array.copy()
+    fitness_array_sort.sort()
+    best_fitness = fitness_array_sort[-1]  # 获取最优适应度值
+    best_fitness_ls.append(best_fitness)
+    ave_fitness_ls.append(fitness_array.sum() / size)
+    # 计数器加一
+    account = account + 1
+    if account == maxgen:
+        index = fitness_ls.index(max(fitness_ls))  # 返回最大值的索引
+        best_code = chrom_sum[index]  # 通过索引获得对于染色体
+        break
+
+# 参数提取
+hidden_weight = best_code[0:n_feature * n_hidden]
+hidden_bias = best_code[n_feature * n_hidden:
+                        n_feature * n_hidden + n_hidden]
+output_weight = best_code[n_feature * n_hidden + n_hidden:
+                          n_feature * n_hidden + n_hidden + n_hidden * n_output]
+output_bias = best_code[n_feature * n_hidden + n_hidden + n_hidden * n_output:
+                        n_feature * n_hidden + n_hidden + n_hidden * n_output + n_output]
+# 类型转换
+tensor_tran = transforms.ToTensor()
+hidden_weight = tensor_tran(np.array(hidden_weight).reshape((n_hidden, n_feature))).to(torch.float32)
+hidden_bias = tensor_tran(np.array(hidden_bias).reshape((1, n_hidden))).to(torch.float32)
+output_weight = tensor_tran(np.array(output_weight).reshape((n_output, n_hidden))).to(torch.float32)
+output_bias = tensor_tran(np.array(output_bias).reshape((1, n_output))).to(torch.float32)
+# 形装转换
+hidden_weight = hidden_weight.reshape((n_hidden, n_feature))
+hidden_bias = hidden_bias.reshape(n_hidden)
+output_weight = output_weight.reshape((n_output, n_hidden))
+output_bias = output_bias.reshape(n_output)
+GA = [hidden_weight, hidden_bias, output_weight, output_bias]
+
+# 带入模型计算
+BP_model = BP_network.BP_net(n_feature, n_hidden, n_output, GA)
+ini_BP_model = BP_network.ini_BP_net(n_feature, n_hidden, n_output)
+# 网络训练
+loss = BP_network.train(BP_model, epochs, learning_rate, x_train, y_train)
+ini_loss = BP_network.train(ini_BP_model, epochs, learning_rate, x_train, y_train)
+# 建模效果
+model_x = BP_model(x_train)
+ini_model_x = ini_BP_model(x_train)
+# 网络预测
+prediction = BP_model(x_test)
+ini_prediction = ini_BP_model(x_test)
+
+# 建模数据反归一化(都换算到厘米级)
+y_train = y_train.detach().numpy() * fanshu_train
+model_x = model_x.detach().numpy() * fanshu_train
+ini_model_x = ini_model_x.detach().numpy() * fanshu_train
+# 建模绘图
+train_name_ls = name_ls[6:126]
+xlabel = [i for i in range(0, 120, 14)]
+plt.plot(y_train, markersize=4, marker='.', label="真值", c='r')
+plt.plot(model_x, markersize=4, marker='.', label="GA-BP预测值", c='b')
+plt.title("GA-BP算法建模情况")
+plt.ylabel("累计裂缝宽度（mm）")
+plt.xticks(xlabel, [train_name_ls[i] for i in xlabel], rotation=25)
+plt.grid(linestyle='-.')  # 设置虚线
+plt.legend()
+
+f2 = plt.figure()
+plt.plot(y_train, markersize=4, marker='.', label="真值", c='r')
+plt.plot(ini_model_x, markersize=4, marker='.', label="BP预测值", c='g')
+plt.title("BP算法建模情况")
+plt.ylabel("累计裂缝宽度（mm）")
+plt.xticks(xlabel, [train_name_ls[i] for i in xlabel], rotation=25)
+plt.grid(linestyle='-.')
+plt.legend()
+
+# 预测数据格式转换（厘米级）
+GABP_prediction = prediction.detach().numpy()
+BP_prediction = ini_prediction.detach().numpy()
+y_label = y_label.detach().numpy()
+# 预测数据反归一化（厘米级）
+GABP_prediction = GABP_prediction * fanshu
+BP_prediction = BP_prediction * fanshu
+y_label = y_label * fanshu
+
+# 计算预测结果的SSE误差
+def get_MSE(argu1, argu2):
+    if len(argu1) != len(argu2):
+        return 0
+    error = 0
+    for i in range(len(argu1)):
+        error = error + pow((argu1[i] - argu2[i]), 2)
+    error = float(error[0])
+    return round(error, 5)
+
+
+error_BP = get_MSE(y_label, BP_prediction)
+error_GA_BP = get_MSE(y_label, GABP_prediction)
+print("BP算法预测MSE误差为：", error_BP)
+print("GA-BP算法预测MSE误差为：", error_GA_BP)
+
+# 将巡行情况和运行结果写入日志
+f = open("log.txt",'a',encoding='UTF-8')     # 追加写打开文件
+f.write("运行时间：" + str(time.ctime()) + '\n')
+f.write("训练数据长度为：" + str(train_num) + '\n'
+        + "测试数据长度为：" + str(test_num) + '\n')
+f.write("网络结构层数为：{}、{}、{}\n".format(n_feature,n_hidden,n_output))
+f.write("遗传迭代所获得的最优权值为：" + str(best_code) + "\n")
+f.write("======预测结果如下======\n真值数据为：" + str(y_label.flatten()) + '\n')
+f.write("BP预测结果为：" + str(BP_prediction.flatten()) + "\n"
+        + "GA-BP预测结果为：" + str(GABP_prediction.flatten()) + '\n')
+f.write("-->>BP预测MSE误差为：" + str(error_BP) + '平方厘米\n'
+        + "-->>GA-BP预测MSE误差为：" + str(error_GA_BP) + '平方厘米\n\n')
+f.close()
+
+# 预测绘图
+test_name_ls = name_ls[126:152]
+xlabel2 = [i for i in range(0, 26, 4)]
+
+f3 = plt.figure()
+plt.plot(y_label, markersize=4, marker='.', label="真值", c='r')
+plt.plot(GABP_prediction, markersize=4, marker='*', label="GA-BP预测值", c='b')
+plt.plot(BP_prediction, markersize=4, marker='^', label="BP预测值", c='g')
+plt.title("算法预测情况对比")
+plt.ylabel("累计裂缝宽度（mm）")
+plt.xticks(xlabel2, [test_name_ls[i] for i in xlabel2], rotation=20)
+plt.legend()
+plt.grid(linestyle='-.')
+
+f4 = plt.figure()
+plt.plot(y_label, markersize=4, marker='.', label="真值", c='r')
+plt.plot(BP_prediction, markersize=4, marker='^', label="BP预测值", c='g')
+plt.title("BP算法预测情况")
+plt.ylabel("累计裂缝宽度（mm）")
+plt.xticks(xlabel2, [test_name_ls[i] for i in xlabel2], rotation=20)
+plt.legend()
+plt.grid(linestyle='-.')
+
+f5 = plt.figure()
+plt.plot(y_label, markersize=4, marker='.', label="真值", c='r')
+plt.plot(GABP_prediction, markersize=4, marker='*', label="GA-BP预测值", c='b')
+plt.title("GA-BP算法预测情况")
+plt.ylabel("累计裂缝宽度（mm）")
+plt.xticks(xlabel2, [test_name_ls[i] for i in xlabel2], rotation=20)
+plt.legend()
+plt.grid(linestyle='-.')
+
+plt.show()
